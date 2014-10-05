@@ -34,7 +34,7 @@ bool isDouble(std::string &s) {
   return s.find_first_not_of("0123456789.") == std::string::npos;
 }
 
-bool isObjectMatch(lindaObj &newO, lindaObj &oldO, std::map<std::string, lindaObj *> &localVars) {
+bool isObjectMatch(lindaObj &newO, lindaObj &oldO, VarMap &localVars) {
   // Variable shows the type it represent here.
   if (newO.getType() != oldO.getType())
     return false;
@@ -58,7 +58,7 @@ bool isObjectMatch(lindaObj &newO, lindaObj &oldO, std::map<std::string, lindaOb
   return false;
 }
 
-bool isMatch(lindaTuple &newT, lindaTuple &oldT, std::map<std::string, lindaObj *> &localVars) {
+bool isMatch(lindaTuple &newT, lindaTuple &oldT, VarMap &localVars) {
   if (newT.size() != oldT.size())
     return false;
   for (size_t i = 0; i < newT.size(); i++) {
@@ -72,7 +72,7 @@ bool isMatch(lindaTuple &newT, lindaTuple &oldT, std::map<std::string, lindaObj 
   return true;
 }
 
-void storeLocalVar(lindaObj &newO, lindaObj &oldO, std::map<std::string, lindaObj *> &localVars) {
+void storeLocalVar(lindaObj &newO, lindaObj &oldO, VarMap &localVars) {
   patternObj *p;
   if ((p = dynamic_cast<patternObj *>(&newO))) {
     if (oldO.getType() == INT) {
@@ -89,8 +89,8 @@ void storeLocalVar(lindaObj &newO, lindaObj &oldO, std::map<std::string, lindaOb
 }
 
 bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple, 
-		      std::map<std::string, lindaObj *> &localVars, 
-		      std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+		      VarMap &localVars, 
+		      FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
     if (isExp(*it)) {
       int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars);
@@ -122,8 +122,8 @@ bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple,
 }
 
 std::vector<lindaTuple>::iterator findInTuple(std::vector<std::string> &s, 
-					      std::map<std::string, lindaObj *> &localVars, 
-					      std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+					      VarMap &localVars, 
+					      FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
   // Build a tuple for the input.
   lindaTuple newTuple;
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
@@ -255,7 +255,7 @@ std::vector<std::string> getMultiLines(std::vector<std::string> &lines, std::vec
   return newLines;
 }
 
-int evaluateExp(std::string expr, std::map<std::string, int> &loopSymbols, std::set<std::string> &userDefinedFuncs, std::map<std::string, lindaObj *> &localVars) {
+int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFuncs, VarMap &localVars) {
   int result = -1;
   std::string expName = (expr).substr(0, (expr).find("("));
 
@@ -355,7 +355,7 @@ std::string getFunctName(std::string &line) {
   return "";
 }
 
-void writeFile(std::vector<std::string> &lines, std::set<std::string> &userDefinedFuncs, int threadNum) {
+void writeFile(std::vector<std::string> &lines, FunctSet &userDefinedFuncs, int threadNum) {
   //std::cout << "Inside writeFile" << std::endl;
   // map filename to the user defined functions
   std::string startLine = lines[0];

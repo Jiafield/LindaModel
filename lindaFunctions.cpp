@@ -10,56 +10,60 @@
 #include <unistd.h>
 #include <regex>
 #include "tupleObjects.h"
-#include "tokenizer.h"
 #include "lindaFunctions.h"
+#include "tokenizer.h"
 
 std::vector<lindaTuple> globalTuples;
 pthread_mutex_t gLock;
 std::vector<pthread_cond_t *> threadLocks;
 std::vector<pthread_cond_t *> waitingList;
+pthread_mutex_t wLock;
 
-void out(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void out(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols))
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols)) {
     // Use global tuples
     pthread_mutex_lock(&gLock);
     globalTuples.push_back(newTuple);
     pthread_mutex_unlock(&gLock);
     // Notify all waiting threads
-    std::cout << "Wait list size found " << waitingList.size() << std::endl;
-    for (size_t i = 0; i < waitingList.size(); i++) {
-      pthread_cond_signal(waitingList[i]);
+    pthread_mutex_lock(&wLock);
+    for (std::vector<pthread_cond_t *>::iterator it = waitingList.begin(); it != waitingList.end(); it++) {
+      pthread_cond_signal(*it);
     }
+    waitingList.clear();
+    pthread_mutex_unlock(&wLock);
+  }
 }
 
-void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
-
+void in(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   pthread_mutex_lock(&gLock);
-  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
   while (1) {
+    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
     if (result == globalTuples.end()) {
-      std::cout << "block from in" << std::endl;
-      pthread_cond_wait(threadLocks[threadNum], &gLock);
+      std::cout << "Thread " << threadNum << " block from in" << std::endl;
+      pthread_mutex_lock(&wLock);
       waitingList.push_back(threadLocks[threadNum]);
-      std::cout << "WaitingList length " << waitingList.size() << std::endl;
+      pthread_mutex_unlock(&wLock);
+      pthread_cond_wait(threadLocks[threadNum], &gLock);
     } else {
       globalTuples.erase(result);
-      // Remove from waiting list
-      //waitingList.
       break;
     }
   }
   pthread_mutex_unlock(&gLock);
 }
 
-void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+void rd(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   pthread_mutex_lock(&gLock);
-  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
   while (1) {
+    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
     if (result == globalTuples.end()) {
-      //std::cout << "block from rd" << std::endl;
-      pthread_cond_wait(threadLocks[threadNum], &gLock);
+      std::cout << "Thread " << threadNum << " block from rd" << std::endl;
+      pthread_mutex_lock(&wLock);
       waitingList.push_back(threadLocks[threadNum]);
+      pthread_mutex_unlock(&wLock);
+      pthread_cond_wait(threadLocks[threadNum], &gLock);
     } else {
       break;
     }
@@ -67,27 +71,36 @@ void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &loca
   pthread_mutex_unlock(&gLock);
 }
 
-bool inp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+bool inp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+  bool r = false;
+  pthread_mutex_lock(&gLock);
   std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
-  if (result == globalTuples.end()) 
-    return false;
-  globalTuples.erase(result);
-  return true;
+  if (result != globalTuples.end()) {
+    globalTuples.erase(result);
+    r = true;
+  }
+  pthread_mutex_unlock(&gLock);
+  return r;
 }
 
-bool rdp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
-  return findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) != globalTuples.end();
+bool rdp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+  bool result = false;
+  pthread_mutex_lock(&gLock);
+  if (findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) != globalTuples.end())
+    result = true;
+  pthread_mutex_unlock(&gLock);
+  return result;
 }
 
-void eval(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void eval(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
   for (size_t i = 0; i < elems.size(); i++) {
     if (isExp(elems[i])) {
       // first case: get expression result
       int result = evaluateExp(elems[i], loopSymbols, userDefinedFuncs, localVars);
-      if (result != -1)
+      if (result != -1) {
 	elems[i] = std::to_string(result);
-      else {
-	// block and wait
+      } else {
+	std::cout << "Couldn't evaluate exp " << elems[i] << std::endl;
       }
     } else if (loopSymbols.find(elems[i]) != loopSymbols.end()) {
       //second case: Change loop symbol to value
@@ -96,17 +109,30 @@ void eval(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &lo
   }
 
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols))
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols)) {
+    // Use global tuples
+    pthread_mutex_lock(&gLock);
     globalTuples.push_back(newTuple);
-}
-
-void dump() {
-  for (std::vector<lindaTuple>::iterator it = globalTuples.begin(); it != globalTuples.end(); it++) {
-    std::cout << *it << std::endl;
+    pthread_mutex_unlock(&gLock);
+    // Notify all waiting threads
+    pthread_mutex_lock(&wLock);
+    for (std::vector<pthread_cond_t *>::iterator it = waitingList.begin(); it != waitingList.end(); it++) {
+      pthread_cond_signal(*it);
+    }
+    waitingList.clear();
+    pthread_mutex_unlock(&wLock);
   }
 }
 
-void lindaFor(int start, int end, std::string symbol, std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+void dump() {
+  pthread_mutex_lock(&gLock);
+  for (std::vector<lindaTuple>::iterator it = globalTuples.begin(); it != globalTuples.end(); it++) {
+    std::cout << *it << std::endl;
+  }
+  pthread_mutex_unlock(&gLock);
+}
+
+void lindaFor(int start, int end, std::string symbol, std::vector<std::string>lines, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   //for (auto line:lines) std::cout << line << std::endl;
   for (int i = start; i < end; i++) {
     loopSymbols[symbol] = i;
@@ -124,7 +150,7 @@ void lindaFor(int start, int end, std::string symbol, std::vector<std::string>li
   loopSymbols.erase(symbol);
 }
 
-void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+void lindaIF(std::vector<std::string>lines, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   size_t start = (lines[0]).find("(") + 1;
   size_t end = (lines[0]).find_last_of(")");
   std::string condition = (lines[0]).substr(start, end - start);
@@ -172,7 +198,7 @@ void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &l
 }
 
 
-void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   std::vector<std::string> elems;
   int start, end;
   std::string symbol;
@@ -246,9 +272,9 @@ void *threadProcessor(void *args) {
   }
 
   // Build all local variables' containers 
-  std::map<std::string, lindaObj *> localVars;
-  std::set<std::string> userDefinedFuncs;
-  std::map<std::string, int> loopSymbols;
+  VarMap localVars;
+  FunctSet userDefinedFuncs;
+  LoopMap loopSymbols;
 
   // Read file
   std::vector<std::string> lines;
@@ -280,11 +306,11 @@ void *threadProcessor(void *args) {
   return NULL;
 }
 
-int main() {
-  std::string filename;
+int main(int argc, char** argv) {
+  std::string filename(argv[1]);
   // Standard output and input
-  std::cout << "Enter input file path: ";
-  std::cin >> filename;
+  //std::cout << "Enter input file path: ";
+  //std::cin >> filename;
   // Open .bat file
   std::ifstream infile(filename.c_str());
   if (!infile) {
@@ -301,6 +327,7 @@ int main() {
 
   // Initialize mutex locks
   pthread_mutex_init(&gLock, NULL);
+  pthread_mutex_init(&wLock, NULL);
 
   // Initialize conditions locks
   int numThread = lines.size();
@@ -316,9 +343,9 @@ int main() {
 
   for (int i = 0; i < numThread; i++) {
     lines[i] = lines[i] + "#" + std::to_string(i);
+    std::cout << "Create thread for file \"" << lines[i] << "\'" << std::endl;
     //std::cout << "args " << args << std::endl;
     status = pthread_create(allThreads + i, NULL, threadProcessor, (void *)(lines[i].c_str()));
-    std::cout << "Create thread for file \"" << lines[i] << "\'" << std::endl;
     if (status != 0) {
       std::cout << "Create thread for file \"" << lines[i] << "\" error" << std::endl;
       exit(EXIT_FAILURE);
@@ -330,6 +357,7 @@ int main() {
   }
 
   pthread_mutex_destroy(&gLock);
+  pthread_mutex_destroy(&wLock);
   for (size_t i = 0; i < threadLocks.size(); i++)
   pthread_cond_destroy(threadLocks[i]);
   return 0;
