@@ -90,18 +90,14 @@ void storeLocalVar(lindaObj &newO, lindaObj &oldO, std::map<std::string, lindaOb
 
 bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple, 
 		      std::map<std::string, lindaObj *> &localVars, 
-		      std::set<std::string> &userDefinedFuncs) {
+		      std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
     if (isExp(*it)) {
-      std::string expName = (*it).substr(0, (*it).find("("));
-      if (userDefinedFuncs.find(expName) != userDefinedFuncs.end()) {
-	size_t start = (*it).find("(") + 1;
-	size_t end = (*it).find(")");
-	std::string params = (*it).substr(start, end - start);
-	int result = system((expName + " " + params).c_str());
+      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars);
+      if (result != -1) {
 	newTuple.push_back(new intObj(result));
       } else {
-	// block and wait
+	// wait and block
       }
     } else if (isPattern(*it)) {
       if (localVars.find(*it) != localVars.end()) {
@@ -127,18 +123,14 @@ bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple,
 
 std::vector<lindaTuple>::iterator findInTuple(std::vector<std::string> &s, 
 					      std::map<std::string, lindaObj *> &localVars, 
-					      std::set<std::string> &userDefinedFuncs) {
+					      std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   // Build a tuple for the input.
   lindaTuple newTuple;
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
     //std::cout << "elems " << *it << std::endl;
     if (isExp(*it)) {
-      std::string expName = (*it).substr(0, (*it).find("("));
-      if (userDefinedFuncs.find(expName) != userDefinedFuncs.end()) {
-	size_t start = (*it).find("(") + 1;
-	size_t end = (*it).find(")");
-	std::string params = (*it).substr(start, end - start);
-	int result = system(("./" + expName + " " + params).c_str());
+      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars);
+      if (result != -1) {
 	newTuple.push_back(new intObj(result));
       } else {
 	// wait and block
@@ -178,17 +170,15 @@ LINDA_TYPE findFunctionType(std::string s) {
       s[i] = ' ';
   }
 
-  std::regex rIn(" *in *\\(.*\\);");
-  std::regex rOut(" *out *\\(.*\\);");
-  std::regex rEval(" *eval *\\(.*\\);");
-  std::regex rRd(" *rd *\\(.*\\);");
-  std::regex rRdp(" *rdp *\\(.*\\);");
-  std::regex rInp(" *inp *\\(.*\\);");
-  std::regex rDump(" *dump *\\(.*\\);");
+  std::regex rIn(" *in *\\(.*\\).*");
+  std::regex rOut(" *out *\\(.*\\).*");
+  std::regex rEval(" *eval *\\(.*\\).*");
+  std::regex rRd(" *rd *\\(.*\\).*");
+  std::regex rRdp(" *rdp *\\(.*\\).*");
+  std::regex rInp(" *inp *\\(.*\\).*");
+  std::regex rDump(" *dump *\\(.*\\).*");
 
   std::regex rIf(" *if.*");
-  std::regex rElseif(".*else if.*");
-  std::regex rElse(".*else.*");
   std::regex rFor(" *for.*");
   std::regex rDefine(" *define.*");
   if (std::regex_match(s, rIn))
@@ -207,13 +197,103 @@ LINDA_TYPE findFunctionType(std::string s) {
     return DUMP;
   else if (std::regex_match(s, rIf))
     return IF;
-  else if (std::regex_match(s, rElse))
-    return ELSE;
   else if (std::regex_match(s, rFor))
     return FOR;
   else if (std::regex_match(s, rDefine))
     return DEFINE;
   return OTHER;
+}
+
+bool isOneLineCommand(LINDA_TYPE type) {
+  return type >= IN and type <=DUMP;
+}
+
+bool isMultiLineCommand(LINDA_TYPE type) {
+  return type >= IF and type <= DEFINE;
+}
+
+std::vector<std::string> getMultiLines(std::vector<std::string> &lines, std::vector<std::string>::iterator &it) {
+  std::vector<std::string> newLines;
+  int braceCount = std::count((*it).begin(), (*it).end(), '{');
+  braceCount -= std::count((*it).begin(), (*it).end(), '}');
+  newLines.push_back(*it);
+  // In case { not in the same line with if / for
+  if ((++it) != lines.end()) {
+    braceCount += std::count((*it).begin(), (*it).end(), '{');
+    braceCount -= std::count((*it).begin(), (*it).end(), '}');
+    newLines.push_back(*it);
+  }
+  while (braceCount > 0 && (++it) != lines.end()) {
+    braceCount += std::count((*it).begin(), (*it).end(), '{');
+    braceCount -= std::count((*it).begin(), (*it).end(), '}');
+    newLines.push_back(*it);
+  }
+  // Special for if - else command
+  std::vector<std::string>::iterator nextIt = it + 1;
+  if (nextIt != lines.end() && (*nextIt).find("else") != std::string::npos) {
+    it++;
+    braceCount += std::count((*it).begin(), (*it).end(), '{');
+    braceCount -= std::count((*it).begin(), (*it).end(), '}');
+    newLines.push_back(*it);
+    // In case { not in the same line with else
+    if ((++it) != lines.end()) { 
+      braceCount += std::count((*it).begin(), (*it).end(), '{');
+      braceCount -= std::count((*it).begin(), (*it).end(), '}');
+      newLines.push_back(*it);
+    }
+    while (braceCount > 0 && (++it) != lines.end()) {
+      braceCount += std::count((*it).begin(), (*it).end(), '{');
+      braceCount -= std::count((*it).begin(), (*it).end(), '}');
+      newLines.push_back(*it);
+    }
+  }
+    
+  if (braceCount != 0) {
+    std::cout << "User defined function's {} couldn't match." <<std::endl;
+    exit(EXIT_FAILURE);
+  }
+  return newLines;
+}
+
+int evaluateExp(std::string expr, std::map<std::string, int> &loopSymbols, std::set<std::string> &userDefinedFuncs, std::map<std::string, lindaObj *> &localVars) {
+  int result = -1;
+  std::string expName = (expr).substr(0, (expr).find("("));
+
+  size_t start = (expr).find("(") + 1;
+  size_t end = (expr).find_last_of(")");
+  std::string params = (expr).substr(start, end - start);
+
+  if (userDefinedFuncs.find(expName) != userDefinedFuncs.end()) {
+    // Case 1: The expression is a user defined function
+    if (!isInt(params)) {
+      if (loopSymbols.find(params) != loopSymbols.end()) {
+	params = std::to_string(loopSymbols[params]);
+      } else if (localVars.find(params) != localVars.end()) {
+	intObj *intO = dynamic_cast<intObj *>(localVars[params]);
+	params = std::to_string(intO->get());
+      }
+    }
+    int status = system(("./" + expName + " " + params).c_str());
+    result = WEXITSTATUS(status);
+  } else {
+    // Case 2: The expression is inp or rdp
+    //std::cout << "condition is " << expr << std::endl;
+    LINDA_TYPE type = findFunctionType(expr);
+    //std::cout << "expr type is " << type << std::endl;
+    std::vector<std::string> elems;
+    if (type == INP) {
+      getInOutElems(expr, elems);
+      return inp(elems, localVars, userDefinedFuncs, loopSymbols);
+    } else if (type == RDP) {
+      getInOutElems(expr, elems);
+      return rdp(elems, localVars, userDefinedFuncs, loopSymbols);
+    } else {
+      std::cout << "Couldn't evaluate expression " << expr << std::endl;
+      std::cout << "No boolean return type or couldn't find expr name" << std::endl;
+      exit(EXIT_FAILURE);
+    } 
+  }
+  return result;
 }
 
 void getInOutElems(std::string s, std::vector<std::string> &elems) {
@@ -240,7 +320,7 @@ std::string getForParams(std::string s, int *start, int *end) {
     std::cout << str << std::endl;
     exit(EXIT_FAILURE);
   }
-
+  //for (auto e:elems)  std::cout << e << std::endl;
   // find start, end and symbol
   std::string str1 = elems[0];
   *start = std::atoi(str1.substr(str1.find_first_of("0123456789")).c_str());

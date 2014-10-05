@@ -13,14 +13,14 @@
 
 std::vector<lindaTuple> globalTuples;
 
-void out(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs) {
+void out(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs))
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols))
     globalTuples.push_back(newTuple);
 }
 
-void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs) {
-  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs);
+void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
   if (result == globalTuples.end())
     //block
     std::cout << "block from in" << std::endl;
@@ -28,47 +28,35 @@ void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &loca
     globalTuples.erase(result);
 }
 
-void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs) {
-  if (findInTuple(elems, localVars, userDefinedFuncs) == globalTuples.end())
+void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  if (findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) == globalTuples.end())
     //block
     std::cout << "block from rd" << std::endl;
   else
     return;
 }
 
-bool inp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs) {
-  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs);
+bool inp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
   if (result == globalTuples.end()) 
     return false;
   globalTuples.erase(result);
   return true;
 }
 
-bool rdp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs) {
-  return findInTuple(elems, localVars, userDefinedFuncs) != globalTuples.end();
+bool rdp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  return findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) != globalTuples.end();
 }
 
 void eval(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   for (size_t i = 0; i < elems.size(); i++) {
     if (isExp(elems[i])) {
       // first case: get expression result
-      std::string expName = (elems[i]).substr(0, (elems[i]).find("("));
-      if (userDefinedFuncs.find(expName) != userDefinedFuncs.end()) {
-	size_t start = (elems[i]).find("(") + 1;
-	size_t end = (elems[i]).find(")");
-	std::string params = (elems[i]).substr(start, end - start);
-	if (!isInt(params)) {
-	  if (loopSymbols.find(params) != loopSymbols.end())
-	    params = std::to_string(loopSymbols[params]);
-	}
-	int status = system(("./" + expName + " " + params).c_str());
-	int result = WEXITSTATUS(status);
-	std::cout << result << std::endl;
+      int result = evaluateExp(elems[i], loopSymbols, userDefinedFuncs, localVars);
+      if (result != -1)
 	elems[i] = std::to_string(result);
-      } else {
-	// wait and block
-	std::cout << "couldn't find expression name " << expName << std::endl;
-	exit(EXIT_FAILURE);
+      else {
+	// block and wait
       }
     } else if (loopSymbols.find(elems[i]) != loopSymbols.end()) {
       //second case: Change loop symbol to value
@@ -77,7 +65,7 @@ void eval(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &lo
   }
 
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs))
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols))
     globalTuples.push_back(newTuple);
 }
 
@@ -88,44 +76,70 @@ void dump() {
 }
 
 void lindaFor(int start, int end, std::string symbol, std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  //for (auto line:lines) std::cout << line << std::endl;
   for (int i = start; i < end; i++) {
     loopSymbols[symbol] = i;
     for (std::vector<std::string>::iterator it = lines.begin() + 1; it != lines.end(); it++) {
       LINDA_TYPE type = findFunctionType(*it);
-      if (type >= IN and type <= DUMP) {
+      if (isOneLineCommand(type)) {
 	std::vector<std::string> newLines(it, it + 1);
 	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
-      } else if (type >= IF and type <= DEFINE) {
-	int braceCount = std::count((*it).begin(), (*it).end(), '{');
-	braceCount -= std::count((*it).begin(), (*it).end(), '}');
-	std::vector<std::string> newLines;
-	newLines.push_back(*it);
-	while (braceCount > 0 && (++it) != lines.end()) {
-	  braceCount += std::count((*it).begin(), (*it).end(), '{');
-	  braceCount -= std::count((*it).begin(), (*it).end(), '}');
-	  newLines.push_back(*it);
-	}
-	if (braceCount != 0) {
-	  std::cout << "User defined function's {} couldn't match." <<std::endl;
-	  exit(EXIT_FAILURE);
-  }
-
+      } else if (isMultiLineCommand(type)) {
+	std::vector<std::string> newLines = getMultiLines(lines, it);
 	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
-      } else {
-	continue;
       }
     }
   }
   loopSymbols.erase(symbol);
 }
 
-void lindaIF(std::string conditionExpr, std::vector<std::string> execExpr) {
-  
+void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+  size_t start = (lines[0]).find("(") + 1;
+  size_t end = (lines[0]).find_last_of(")");
+  std::string condition = (lines[0]).substr(start, end - start);
+
+  std::vector<std::string> ifExps;
+  std::vector<std::string> elseExps;
+  bool ifcase = true;
+  for (auto it = lines.begin() + 1; it != lines.end(); it++) {
+    if ((*it).find("else") != std::string::npos)
+      ifcase = false;
+    if (ifcase)
+      ifExps.push_back(*it);
+    else
+      elseExps.push_back(*it);
+  }
+
+  // Evaluate condition
+  if (evaluateExp(condition, loopSymbols, userDefinedFuncs, localVars)) {
+    //std::cout << "True" << std::endl;
+    for (std::vector<std::string>::iterator it = ifExps.begin(); it != ifExps.end(); it++) {
+      LINDA_TYPE type = findFunctionType(*it);
+      if (isOneLineCommand(type)) {
+	std::vector<std::string> newLines(it, it + 1);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      } else if (isMultiLineCommand(type)) {
+	std::vector<std::string> newLines = getMultiLines(lines, it);
+	//for (auto line:newLines) std::cout << line << std::endl;
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      }
+    }
+  } else {
+    //std::cout << "false" << std::endl;
+    for (std::vector<std::string>::iterator it = elseExps.begin(); it != elseExps.end(); it++) {
+      LINDA_TYPE type = findFunctionType(*it);
+      if (isOneLineCommand(type)) {
+	std::vector<std::string> newLines(it, it + 1);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      } else if (isMultiLineCommand(type)) {
+	std::vector<std::string> newLines = getMultiLines(lines, it);
+	//for (auto line:newLines) std::cout << line << std::endl;
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      }
+    }
+  }
 }
 
-void lindaElse(std::vector<std::string> execExpr) {
-
-}
 
 void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   std::vector<std::string> elems;
@@ -135,12 +149,12 @@ void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::str
   case IN:
     std::cout << "in" << std::endl;
     getInOutElems(lines[0], elems);
-    in(elems, localVars, userDefinedFuncs);
+    in(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case OUT:
     std::cout << "out" << std::endl;
     getInOutElems(lines[0], elems);
-    out(elems, localVars, userDefinedFuncs);
+    out(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case EVAL:
     std::cout << "eval" << std::endl;
@@ -150,17 +164,17 @@ void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::str
   case RD:
     std::cout << "rdp" << std::endl;
     getInOutElems(lines[0], elems);
-    rd(elems, localVars, userDefinedFuncs);
+    rd(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case RDP:
     std::cout << "rdp" << std::endl;
     getInOutElems(lines[0], elems);
-    rdp(elems, localVars, userDefinedFuncs);
+    rdp(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case INP:
     std::cout << "inp" << std::endl;
     getInOutElems(lines[0], elems);
-    inp(elems, localVars, userDefinedFuncs);
+    inp(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case DUMP:
     std::cout << "dump" << std::endl;
@@ -168,9 +182,8 @@ void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::str
     break;
   case IF:
     std::cout << "if" << std::endl;
-    break;
-  case ELSE:
-    std::cout << "else" << std::endl;
+    //for (auto f:lines) std::cout << f << std::endl;
+    lindaIF(lines, localVars, userDefinedFuncs, loopSymbols);
     break;
   case FOR:
     std::cout << "for" << std::endl;
@@ -233,27 +246,18 @@ int main() {
   // Process each line
   for (std::vector<std::string>::iterator it = lines.begin(); it != lines.end(); it++) {
     LINDA_TYPE type = findFunctionType(*it);
-    if (type >= IN and type <= DUMP) {
+    if (isOneLineCommand(type)) {
       std::vector<std::string> newLines(it, it + 1);
       runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
-    } else if (type >= IF and type <= DEFINE) {
-      int braceCount = std::count((*it).begin(), (*it).end(), '{');
-      braceCount -= std::count((*it).begin(), (*it).end(), '}');
-      std::vector<std::string> newLines;
-      newLines.push_back(*it);
-      while (braceCount > 0 && (++it) != lines.end()) {
-	braceCount += std::count((*it).begin(), (*it).end(), '{');
-	braceCount -= std::count((*it).begin(), (*it).end(), '}');
-	newLines.push_back(*it);
-      }
-      if (braceCount != 0) {
-	std::cout << "{} couldn't match." <<std::endl;
-	exit(EXIT_FAILURE);    
-      }
-      
+    } else if (isMultiLineCommand(type)) {
+      std::vector<std::string> newLines = getMultiLines(lines, it);
+      //for (auto line:newLines) std::cout << line << std::endl;
       runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
     } else {
-      continue;
+      if (!line.empty()) {
+	std::cout << "Can not recognize command " << std::endl;
+	exit(EXIT_FAILURE);
+      }
     }
   }
   //  pthread.join();
