@@ -6,34 +6,65 @@
 #include <sstream>
 #include <fstream>
 #include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <regex>
 #include "tupleObjects.h"
 #include "tokenizer.h"
 #include "lindaFunctions.h"
 
 std::vector<lindaTuple> globalTuples;
+pthread_mutex_t gLock;
+std::vector<pthread_cond_t *> threadLocks;
+std::vector<pthread_cond_t *> waitingList;
 
 void out(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
   lindaTuple newTuple;
   if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols))
+    // Use global tuples
+    pthread_mutex_lock(&gLock);
     globalTuples.push_back(newTuple);
+    pthread_mutex_unlock(&gLock);
+    // Notify all waiting threads
+    std::cout << "Wait list size found " << waitingList.size() << std::endl;
+    for (size_t i = 0; i < waitingList.size(); i++) {
+      pthread_cond_signal(waitingList[i]);
+    }
 }
 
-void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void in(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+
+  pthread_mutex_lock(&gLock);
   std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
-  if (result == globalTuples.end())
-    //block
-    std::cout << "block from in" << std::endl;
-  else
-    globalTuples.erase(result);
+  while (1) {
+    if (result == globalTuples.end()) {
+      std::cout << "block from in" << std::endl;
+      pthread_cond_wait(threadLocks[threadNum], &gLock);
+      waitingList.push_back(threadLocks[threadNum]);
+      std::cout << "WaitingList length " << waitingList.size() << std::endl;
+    } else {
+      globalTuples.erase(result);
+      // Remove from waiting list
+      //waitingList.
+      break;
+    }
+  }
+  pthread_mutex_unlock(&gLock);
 }
 
-void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
-  if (findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) == globalTuples.end())
-    //block
-    std::cout << "block from rd" << std::endl;
-  else
-    return;
+void rd(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
+  pthread_mutex_lock(&gLock);
+  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
+  while (1) {
+    if (result == globalTuples.end()) {
+      //std::cout << "block from rd" << std::endl;
+      pthread_cond_wait(threadLocks[threadNum], &gLock);
+      waitingList.push_back(threadLocks[threadNum]);
+    } else {
+      break;
+    }
+  }
+  pthread_mutex_unlock(&gLock);
 }
 
 bool inp(std::vector<std::string> &elems, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
@@ -75,7 +106,7 @@ void dump() {
   }
 }
 
-void lindaFor(int start, int end, std::string symbol, std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void lindaFor(int start, int end, std::string symbol, std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
   //for (auto line:lines) std::cout << line << std::endl;
   for (int i = start; i < end; i++) {
     loopSymbols[symbol] = i;
@@ -83,17 +114,17 @@ void lindaFor(int start, int end, std::string symbol, std::vector<std::string>li
       LINDA_TYPE type = findFunctionType(*it);
       if (isOneLineCommand(type)) {
 	std::vector<std::string> newLines(it, it + 1);
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       } else if (isMultiLineCommand(type)) {
 	std::vector<std::string> newLines = getMultiLines(lines, it);
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       }
     }
   }
   loopSymbols.erase(symbol);
 }
 
-void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
   size_t start = (lines[0]).find("(") + 1;
   size_t end = (lines[0]).find_last_of(")");
   std::string condition = (lines[0]).substr(start, end - start);
@@ -117,11 +148,11 @@ void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &l
       LINDA_TYPE type = findFunctionType(*it);
       if (isOneLineCommand(type)) {
 	std::vector<std::string> newLines(it, it + 1);
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       } else if (isMultiLineCommand(type)) {
 	std::vector<std::string> newLines = getMultiLines(lines, it);
 	//for (auto line:newLines) std::cout << line << std::endl;
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       }
     }
   } else {
@@ -130,111 +161,95 @@ void lindaIF(std::vector<std::string>lines, std::map<std::string, lindaObj *> &l
       LINDA_TYPE type = findFunctionType(*it);
       if (isOneLineCommand(type)) {
 	std::vector<std::string> newLines(it, it + 1);
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       } else if (isMultiLineCommand(type)) {
 	std::vector<std::string> newLines = getMultiLines(lines, it);
 	//for (auto line:newLines) std::cout << line << std::endl;
-	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+	runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
       }
     }
   }
 }
 
 
-void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols) {
+void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, std::map<std::string, lindaObj *> &localVars, std::set<std::string> &userDefinedFuncs, std::map<std::string, int> &loopSymbols, int threadNum) {
   std::vector<std::string> elems;
   int start, end;
   std::string symbol;
   switch (type) {
   case IN:
-    std::cout << "in" << std::endl;
+    std::cout << "Thread" << threadNum << " in" << std::endl;
     getInOutElems(lines[0], elems);
-    in(elems, localVars, userDefinedFuncs, loopSymbols);
+    in(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case OUT:
-    std::cout << "out" << std::endl;
+    std::cout << "Thread" << threadNum << " out" << std::endl;
     getInOutElems(lines[0], elems);
     out(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case EVAL:
-    std::cout << "eval" << std::endl;
+    std::cout << "Thread" << threadNum << " eval" << std::endl;
     getInOutElems(lines[0], elems);
     eval(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case RD:
-    std::cout << "rdp" << std::endl;
+    std::cout << "Thread" << threadNum << " rdp" << std::endl;
     getInOutElems(lines[0], elems);
-    rd(elems, localVars, userDefinedFuncs, loopSymbols);
+    rd(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case RDP:
-    std::cout << "rdp" << std::endl;
+    std::cout << "Thread" << threadNum << " rdp" << std::endl;
     getInOutElems(lines[0], elems);
     rdp(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case INP:
-    std::cout << "inp" << std::endl;
+    std::cout << "Thread" << threadNum << " inp" << std::endl;
     getInOutElems(lines[0], elems);
     inp(elems, localVars, userDefinedFuncs, loopSymbols);
     break;
   case DUMP:
-    std::cout << "dump" << std::endl;
+    std::cout << "Thread" << threadNum << " dump" << std::endl;
     dump();
     break;
   case IF:
-    std::cout << "if" << std::endl;
+    std::cout << "Thread" << threadNum << " if" << std::endl;
     //for (auto f:lines) std::cout << f << std::endl;
-    lindaIF(lines, localVars, userDefinedFuncs, loopSymbols);
+    lindaIF(lines, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case FOR:
-    std::cout << "for" << std::endl;
+    std::cout << "Thread" << threadNum << " for" << std::endl;
     symbol = getForParams(lines[0], &start, &end);
     //std::cout << "Params " << start << end << symbol << std::endl;
-    lindaFor(start, end, symbol, lines, localVars, userDefinedFuncs, loopSymbols);
+    lindaFor(start, end, symbol, lines, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case DEFINE:
-    std::cout << "define" << std::endl;
-    writeFile(lines, userDefinedFuncs, 1); // change 1 to thread number
+    std::cout << "Thread" << threadNum << " define" << std::endl;
+    writeFile(lines, userDefinedFuncs, threadNum);
     //for (auto f:userDefinedFuncs) std::cout << f << std::endl;
     break;
   default:
-    std::cout << "other" << std::endl;
+    std::cout << "Thread" << threadNum << " other" << std::endl;
   }
 }
 
-void *thread_interpreter(std::string &filename) {
-  std::vector<lindaTuple> localVars;
+void *threadProcessor(void *args) {
   // Open file
-  std::ifstream infile(filename.c_str());
-  if (!infile) {
-    std::cout << "Can not open file " << filename << std::endl;
-    exit(EXIT_FAILURE);
-  }
-  // Read file
-  std::string line;
-  while (std::getline(infile, line)) {
-  }
-  dump();
-  infile.close();  
-  return NULL;
-}
-
-int main() {
-  std::string filename;
-  // Standard output and input
-  std::cout << "Enter input filenames: ";
-  std::cin >> filename;
-
-  // Open file
-  std::ifstream infile(filename.c_str());
+  char *pos = strrchr((char *)args, '#');
+  char *number = pos + 1;
+  *pos = '\0';
+  char *filename = (char *)args;
+  int threadNum = atoi(number);
+  std::ifstream infile(filename);
   if (!infile) {
     std::cout << "Can not open file " << filename << std::endl;
     exit(EXIT_FAILURE);
   }
 
-  // Build a local variables' map 
+  // Build all local variables' containers 
   std::map<std::string, lindaObj *> localVars;
   std::set<std::string> userDefinedFuncs;
   std::map<std::string, int> loopSymbols;
+
   // Read file
   std::vector<std::string> lines;
   std::string line;
@@ -245,21 +260,77 @@ int main() {
 
   // Process each line
   for (std::vector<std::string>::iterator it = lines.begin(); it != lines.end(); it++) {
+    // Get command type
     LINDA_TYPE type = findFunctionType(*it);
+    // Run command
     if (isOneLineCommand(type)) {
       std::vector<std::string> newLines(it, it + 1);
-      runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
     } else if (isMultiLineCommand(type)) {
       std::vector<std::string> newLines = getMultiLines(lines, it);
       //for (auto line:newLines) std::cout << line << std::endl;
-      runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols);
+      runFunc(type, newLines, localVars, userDefinedFuncs, loopSymbols, threadNum);
     } else {
       if (!line.empty()) {
-	std::cout << "Can not recognize command " << std::endl;
+	std::cout << "Can not recognize command " << *it << std::endl;
 	exit(EXIT_FAILURE);
       }
     }
   }
-  //  pthread.join();
+  return NULL;
+}
+
+int main() {
+  std::string filename;
+  // Standard output and input
+  std::cout << "Enter input file path: ";
+  std::cin >> filename;
+  // Open .bat file
+  std::ifstream infile(filename.c_str());
+  if (!infile) {
+    std::cout << "Can not open file " << filename << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  // Read file
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(infile, line)) {
+    lines.push_back(line);
+  }
+  infile.close();
+
+  // Initialize mutex locks
+  pthread_mutex_init(&gLock, NULL);
+
+  // Initialize conditions locks
+  int numThread = lines.size();
+  for (int i = 0; i < numThread; i++) {
+    pthread_cond_t *condition = new pthread_cond_t();
+    pthread_cond_init(condition, NULL);
+    threadLocks.push_back(condition);
+  }
+  // Create threads
+  pthread_t allThreads[numThread];
+  int status;
+  void *exit_status;
+
+  for (int i = 0; i < numThread; i++) {
+    lines[i] = lines[i] + "#" + std::to_string(i);
+    //std::cout << "args " << args << std::endl;
+    status = pthread_create(allThreads + i, NULL, threadProcessor, (void *)(lines[i].c_str()));
+    std::cout << "Create thread for file \"" << lines[i] << "\'" << std::endl;
+    if (status != 0) {
+      std::cout << "Create thread for file \"" << lines[i] << "\" error" << std::endl;
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  for (int i = 0; i < numThread; i++) {
+    pthread_join(allThreads[i], &exit_status);
+  }
+
+  pthread_mutex_destroy(&gLock);
+  for (size_t i = 0; i < threadLocks.size(); i++)
+  pthread_cond_destroy(threadLocks[i]);
   return 0;
 }
