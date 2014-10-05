@@ -19,9 +19,9 @@ std::vector<pthread_cond_t *> threadLocks;
 std::vector<pthread_cond_t *> waitingList;
 pthread_mutex_t wLock;
 
-void out(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+void out(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols)) {
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols, threadNum)) {
     // Use global tuples
     pthread_mutex_lock(&gLock);
     globalTuples.push_back(newTuple);
@@ -39,7 +39,7 @@ void out(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefin
 void in(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   pthread_mutex_lock(&gLock);
   while (1) {
-    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
+    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     if (result == globalTuples.end()) {
       std::cout << "Thread " << threadNum << " block from in" << std::endl;
       pthread_mutex_lock(&wLock);
@@ -57,7 +57,7 @@ void in(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefine
 void rd(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   pthread_mutex_lock(&gLock);
   while (1) {
-    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
+    std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     if (result == globalTuples.end()) {
       std::cout << "Thread " << threadNum << " block from rd" << std::endl;
       pthread_mutex_lock(&wLock);
@@ -71,10 +71,10 @@ void rd(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefine
   pthread_mutex_unlock(&gLock);
 }
 
-bool inp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+bool inp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   bool r = false;
   pthread_mutex_lock(&gLock);
-  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols);
+  std::vector<lindaTuple>::iterator result = findInTuple(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
   if (result != globalTuples.end()) {
     globalTuples.erase(result);
     r = true;
@@ -83,20 +83,20 @@ bool inp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefin
   return r;
 }
 
-bool rdp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+bool rdp(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   bool result = false;
   pthread_mutex_lock(&gLock);
-  if (findInTuple(elems, localVars, userDefinedFuncs, loopSymbols) != globalTuples.end())
+  if (findInTuple(elems, localVars, userDefinedFuncs, loopSymbols, threadNum) != globalTuples.end())
     result = true;
   pthread_mutex_unlock(&gLock);
   return result;
 }
 
-void eval(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+void eval(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   for (size_t i = 0; i < elems.size(); i++) {
     if (isExp(elems[i])) {
       // first case: get expression result
-      int result = evaluateExp(elems[i], loopSymbols, userDefinedFuncs, localVars);
+      int result = evaluateExp(elems[i], loopSymbols, userDefinedFuncs, localVars, threadNum);
       if (result != -1) {
 	elems[i] = std::to_string(result);
       } else {
@@ -109,7 +109,7 @@ void eval(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefi
   }
 
   lindaTuple newTuple;
-  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols)) {
+  if (generateOutTuple(elems, newTuple, localVars, userDefinedFuncs, loopSymbols, threadNum)) {
     // Use global tuples
     pthread_mutex_lock(&gLock);
     globalTuples.push_back(newTuple);
@@ -168,7 +168,7 @@ void lindaIF(std::vector<std::string>lines, VarMap &localVars, FunctSet &userDef
   }
 
   // Evaluate condition
-  if (evaluateExp(condition, loopSymbols, userDefinedFuncs, localVars)) {
+  if (evaluateExp(condition, loopSymbols, userDefinedFuncs, localVars, threadNum)) {
     //std::cout << "True" << std::endl;
     for (std::vector<std::string>::iterator it = ifExps.begin(); it != ifExps.end(); it++) {
       LINDA_TYPE type = findFunctionType(*it);
@@ -197,7 +197,6 @@ void lindaIF(std::vector<std::string>lines, VarMap &localVars, FunctSet &userDef
   }
 }
 
-
 void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, VarMap &localVars, FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   std::vector<std::string> elems;
   int start, end;
@@ -211,12 +210,12 @@ void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, VarMap &localVars
   case OUT:
     std::cout << "Thread" << threadNum << " out" << std::endl;
     getInOutElems(lines[0], elems);
-    out(elems, localVars, userDefinedFuncs, loopSymbols);
+    out(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case EVAL:
     std::cout << "Thread" << threadNum << " eval" << std::endl;
     getInOutElems(lines[0], elems);
-    eval(elems, localVars, userDefinedFuncs, loopSymbols);
+    eval(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case RD:
     std::cout << "Thread" << threadNum << " rdp" << std::endl;
@@ -226,12 +225,12 @@ void runFunc(LINDA_TYPE type, std::vector<std::string> &lines, VarMap &localVars
   case RDP:
     std::cout << "Thread" << threadNum << " rdp" << std::endl;
     getInOutElems(lines[0], elems);
-    rdp(elems, localVars, userDefinedFuncs, loopSymbols);
+    rdp(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case INP:
     std::cout << "Thread" << threadNum << " inp" << std::endl;
     getInOutElems(lines[0], elems);
-    inp(elems, localVars, userDefinedFuncs, loopSymbols);
+    inp(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     break;
   case DUMP:
     std::cout << "Thread" << threadNum << " dump" << std::endl;

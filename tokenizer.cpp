@@ -22,6 +22,10 @@ bool isPattern(std::string &s) {
   return s[0] == '?';
 }
 
+bool isVarPattern(std::string &s) {
+  return s[0] == 'd' || s[0] == 's' || s[0] == 'i';
+}
+
 bool isString(std::string &s) {
   return (s[0] == '"') and (s[s.length() - 1] == '"');
 }
@@ -75,31 +79,32 @@ bool isMatch(lindaTuple &newT, lindaTuple &oldT, VarMap &localVars) {
 void storeLocalVar(lindaObj &newO, lindaObj &oldO, VarMap &localVars) {
   patternObj *p;
   if ((p = dynamic_cast<patternObj *>(&newO))) {
+    std::string varName = (p->get()).replace(0, 1, "");
     if (oldO.getType() == INT) {
       intObj *i = dynamic_cast<intObj *>(&oldO);
-      localVars[p->get()] = new intObj(i->get());
+      localVars[varName] = new intObj(i->get());
     } else if (oldO.getType() == DOUBLE) {
       doubleObj *d = dynamic_cast<doubleObj *>(&oldO);
-      localVars[p->get()] = new doubleObj(d->get());
+      localVars[varName] = new doubleObj(d->get());
     } else {
       stringObj *s = dynamic_cast<stringObj *>(&oldO);
-      localVars[p->get()] = new stringObj(s->get());
+      localVars[varName] = new stringObj(s->get());
     }
   }
 }
 
 bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple, 
 		      VarMap &localVars, 
-		      FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+		      FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
     if (isExp(*it)) {
-      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars);
+      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars, threadNum);
       if (result != -1) {
 	newTuple.push_back(new intObj(result));
       } else {
 	// wait and block
       }
-    } else if (isPattern(*it)) {
+    } else if (isVarPattern(*it)) {
       if (localVars.find(*it) != localVars.end()) {
 	newTuple.push_back(localVars[*it]);
       } else {
@@ -123,13 +128,13 @@ bool generateOutTuple(std::vector<std::string> &s, lindaTuple &newTuple,
 
 std::vector<lindaTuple>::iterator findInTuple(std::vector<std::string> &s, 
 					      VarMap &localVars, 
-					      FunctSet &userDefinedFuncs, LoopMap &loopSymbols) {
+					      FunctSet &userDefinedFuncs, LoopMap &loopSymbols, int threadNum) {
   // Build a tuple for the input.
   lindaTuple newTuple;
   for (std::vector<std::string>::iterator it = s.begin(); it != s.end(); it++) {
     //std::cout << "elems " << *it << std::endl;
     if (isExp(*it)) {
-      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars);
+      int result = evaluateExp(*it, loopSymbols, userDefinedFuncs, localVars, threadNum);
       if (result != -1) {
 	newTuple.push_back(new intObj(result));
       } else {
@@ -255,15 +260,15 @@ std::vector<std::string> getMultiLines(std::vector<std::string> &lines, std::vec
   return newLines;
 }
 
-int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFuncs, VarMap &localVars) {
+int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFuncs, VarMap &localVars, int threadNum) {
   int result = -1;
   std::string expName = (expr).substr(0, (expr).find("("));
-
+  std::string expNameT = expName + std::to_string(threadNum);
   size_t start = (expr).find("(") + 1;
   size_t end = (expr).find_last_of(")");
   std::string params = (expr).substr(start, end - start);
 
-  if (userDefinedFuncs.find(expName) != userDefinedFuncs.end()) {
+  if (userDefinedFuncs.find(expNameT) != userDefinedFuncs.end()) {
     // Case 1: The expression is a user defined function
     if (!isInt(params)) {
       if (loopSymbols.find(params) != loopSymbols.end()) {
@@ -273,7 +278,7 @@ int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFun
 	params = std::to_string(intO->get());
       }
     }
-    int status = system(("./" + expName + " " + params).c_str());
+    int status = system(("./" + expNameT + " " + params).c_str());
     result = WEXITSTATUS(status);
   } else {
     // Case 2: The expression is inp or rdp
@@ -283,10 +288,10 @@ int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFun
     std::vector<std::string> elems;
     if (type == INP) {
       getInOutElems(expr, elems);
-      return inp(elems, localVars, userDefinedFuncs, loopSymbols);
+      return inp(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     } else if (type == RDP) {
       getInOutElems(expr, elems);
-      return rdp(elems, localVars, userDefinedFuncs, loopSymbols);
+      return rdp(elems, localVars, userDefinedFuncs, loopSymbols, threadNum);
     } else {
       std::cout << "Couldn't evaluate expression " << expr << std::endl;
       std::cout << "No boolean return type or couldn't find expr name" << std::endl;
@@ -361,7 +366,7 @@ void writeFile(std::vector<std::string> &lines, FunctSet &userDefinedFuncs, int 
   std::string startLine = lines[0];
   //std::cout << "line 0" << startLine << std::endl;
   std::string fileName = "tempFile" + std::to_string(threadNum) + std::to_string(userDefinedFuncs.size()) + ".cpp";
-  std::string funcName = getFunctName(startLine);
+  std::string funcName = getFunctName(startLine) + std::to_string(threadNum);
   funcName.erase(std::remove(funcName.begin(), funcName.end(), ' '), funcName.end());
   if (funcName.empty()) {
     std::cout << "Read user defined function name error" << std::endl;

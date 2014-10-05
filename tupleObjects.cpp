@@ -38,7 +38,7 @@ std::ostream& operator<<(std::ostream& os, const lindaObj& linda)
   if ((i = dynamic_cast<const intObj *>(&linda))) {
     os << i->get();
   } else if ((d = dynamic_cast<const doubleObj *>(&linda))) {
-    os << d->get();
+    os << std::showpoint << d->get();
   } else if ((s = dynamic_cast<const stringObj *>(&linda))) {
     os << s->get();
   } else {
@@ -50,11 +50,12 @@ std::ostream& operator<<(std::ostream& os, const lindaObj& linda)
 
 std::ostream& operator<<(std::ostream& os, const lindaTuple& linda)
 {
-  os << "( ";
-  for (lindaTuple::const_iterator it = linda.begin(); it != linda.end(); it++) {
+  os << "(";
+  for (lindaTuple::const_iterator it = linda.begin(); it != linda.end() - 1; it++) {
     lindaObj *ptr = *it;
-    os << *ptr << " ";
+    os << *ptr << ",";
   }
-  os << ")";
+  lindaObj *ptr = *(linda.end() - 1);
+  os << *ptr << ")";
   return os;
 }
