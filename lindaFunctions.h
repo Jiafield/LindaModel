@@ -8,6 +8,8 @@
 #include "tupleObjects.h"
 
 extern std::vector<lindaTuple> globalTuples;
+extern pthread_mutex_t printLock;
+
 typedef std::map<std::string, lindaObj *> VarMap;
 typedef std::map<std::string, int> LoopMap;
 typedef std::set<std::string> FunctSet;

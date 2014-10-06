@@ -1,4 +1,4 @@
 all: *.cpp
-	g++ -o tuple -g -Wall -std=c++0x *.cpp -lpthread
+	g++ -o P1 -g -Wall -std=gnu++0x -lboost_regex -lpthread tupleObjects.cpp lindaFunctions.cpp tokenizer.cpp
 clean:
-	rm -f *.o tuple
+	rm -f *.o P1 tempFile* *~

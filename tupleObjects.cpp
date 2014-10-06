@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdlib.h>
 #include "tupleObjects.h"
+#include "lindaFunctions.h"
 
 intObj::intObj(int data) {val = data;}
 int intObj::getType() {return INT;}
@@ -51,11 +52,13 @@ std::ostream& operator<<(std::ostream& os, const lindaObj& linda)
 std::ostream& operator<<(std::ostream& os, const lindaTuple& linda)
 {
   os << "(";
+  pthread_mutex_lock(&printLock);
   for (lindaTuple::const_iterator it = linda.begin(); it != linda.end() - 1; it++) {
     lindaObj *ptr = *it;
     os << *ptr << ",";
   }
   lindaObj *ptr = *(linda.end() - 1);
   os << *ptr << ")";
+  pthread_mutex_unlock(&printLock);
   return os;
 }
