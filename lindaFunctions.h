@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include "tupleObjects.h"
 
 extern std::vector<lindaTuple> globalTuples;

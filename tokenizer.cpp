@@ -6,16 +6,21 @@
 #include <sstream>
 #include <fstream>
 #include <stdlib.h>
-#include <regex>
+#include <boost/regex.hpp>
 #include <locale>
 #include <algorithm>
 #include "tupleObjects.h"
 #include "tokenizer.h"
 #include "lindaFunctions.h"
 
+using boost::regex;
+using boost::regex_match;
+using boost::cmatch;
+
 bool isExp(std::string &s) {
-  std::regex rx(".*\\(.*\\)");
-  return std::regex_match(s, rx);
+  regex rx(".*\\(.*\\)");
+  cmatch m;
+  return regex_match(s.c_str(), m, rx);
 }
 
 bool isPattern(std::string &s) {
@@ -175,36 +180,37 @@ LINDA_TYPE findFunctionType(std::string s) {
       s[i] = ' ';
   }
 
-  std::regex rIn(" *in *\\(.*\\).*");
-  std::regex rOut(" *out *\\(.*\\).*");
-  std::regex rEval(" *eval *\\(.*\\).*");
-  std::regex rRd(" *rd *\\(.*\\).*");
-  std::regex rRdp(" *rdp *\\(.*\\).*");
-  std::regex rInp(" *inp *\\(.*\\).*");
-  std::regex rDump(" *dump *\\(.*\\).*");
+  regex rIn(" *in *\\(.*\\).*");
+  regex rOut(" *out *\\(.*\\).*");
+  regex rEval(" *eval *\\(.*\\).*");
+  regex rRd(" *rd *\\(.*\\).*");
+  regex rRdp(" *rdp *\\(.*\\).*");
+  regex rInp(" *inp *\\(.*\\).*");
+  regex rDump(" *dump *\\(.*\\).*");
 
-  std::regex rIf(" *if.*");
-  std::regex rFor(" *for.*");
-  std::regex rDefine(" *define.*");
-  if (std::regex_match(s, rIn))
+  regex rIf(" *if.*");
+  regex rFor(" *for.*");
+  regex rDefine(" *define.*");
+  cmatch m;
+  if (regex_match(s.c_str(), m, rIn))
     return IN;
-  else if (std::regex_match(s, rOut))
+  else if (regex_match(s.c_str(), m, rOut))
     return OUT;
-  else if (std::regex_match(s, rEval))
+  else if (regex_match(s.c_str(), m, rEval))
     return EVAL;
-  else if (std::regex_match(s, rRd))
+  else if (regex_match(s.c_str(), m, rRd))
     return RD;
-  else if (std::regex_match(s, rRdp))
+  else if (regex_match(s.c_str(), m, rRdp))
     return RDP;
-  else if (std::regex_match(s, rInp))
+  else if (regex_match(s.c_str(), m, rInp))
     return INP;
-  else if (std::regex_match(s, rDump))
+  else if (regex_match(s.c_str(), m, rDump))
     return DUMP;
-  else if (std::regex_match(s, rIf))
+  else if (regex_match(s.c_str(), m, rIf))
     return IF;
-  else if (std::regex_match(s, rFor))
+  else if (regex_match(s.c_str(), m, rFor))
     return FOR;
-  else if (std::regex_match(s, rDefine))
+  else if (regex_match(s.c_str(), m, rDefine))
     return DEFINE;
   return OTHER;
 }
@@ -263,7 +269,7 @@ std::vector<std::string> getMultiLines(std::vector<std::string> &lines, std::vec
 int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFuncs, VarMap &localVars, int threadNum) {
   int result = -1;
   std::string expName = (expr).substr(0, (expr).find("("));
-  std::string expNameT = expName + std::to_string(threadNum);
+  std::string expNameT = expName + std::to_string(static_cast<long long int>(threadNum));
   size_t start = (expr).find("(") + 1;
   size_t end = (expr).find_last_of(")");
   std::string params = (expr).substr(start, end - start);
@@ -272,10 +278,10 @@ int evaluateExp(std::string expr, LoopMap &loopSymbols, FunctSet &userDefinedFun
     // Case 1: The expression is a user defined function
     if (!isInt(params)) {
       if (loopSymbols.find(params) != loopSymbols.end()) {
-	params = std::to_string(loopSymbols[params]);
+	params = std::to_string(static_cast<long long int>(loopSymbols[params]));
       } else if (localVars.find(params) != localVars.end()) {
 	intObj *intO = dynamic_cast<intObj *>(localVars[params]);
-	params = std::to_string(intO->get());
+	params = std::to_string(static_cast<long long int>(intO->get()));
       }
     }
     int status = system(("./" + expNameT + " " + params).c_str());
@@ -365,8 +371,8 @@ void writeFile(std::vector<std::string> &lines, FunctSet &userDefinedFuncs, int 
   // map filename to the user defined functions
   std::string startLine = lines[0];
   //std::cout << "line 0" << startLine << std::endl;
-  std::string fileName = "tempFile" + std::to_string(threadNum) + std::to_string(userDefinedFuncs.size()) + ".cpp";
-  std::string funcName = getFunctName(startLine) + std::to_string(threadNum);
+  std::string fileName = "tempFile" + std::to_string(static_cast<long long int>(threadNum)) + std::to_string(static_cast<long long int>(userDefinedFuncs.size())) + ".cpp";
+  std::string funcName = getFunctName(startLine) + std::to_string(static_cast<long long int>(threadNum));
   funcName.erase(std::remove(funcName.begin(), funcName.end(), ' '), funcName.end());
   if (funcName.empty()) {
     std::cout << "Read user defined function name error" << std::endl;
@@ -412,16 +418,17 @@ void writeFile(std::vector<std::string> &lines, FunctSet &userDefinedFuncs, int 
 // Only support int, double, string as user defined function's parameters.
 std::string generateArgs(std::vector<std::string> &args) {
   std::string argStr = "";
-  std::regex intR("int .*");
-  std::regex doubleR("double .*");
-  std::regex stringR("string .*");
+  regex intR("int .*");
+  regex doubleR("double .*");
+  regex stringR("string .*");
+  cmatch m;
   for (size_t i = 0; i < args.size(); i++) {
-    if (std::regex_match(args[i],intR)) {
-      argStr = argStr + "\n\t" + args[i] + " = atoi(argv[" + std::to_string(i + 1) + "])"+ ";";
-    } else if (std::regex_match(args[i], doubleR)) {
-      argStr = argStr + "\n\t" + args[i] + " = atof(argv[" + std::to_string(i + 1) + "])"+ ";";      
-    } else if (std::regex_match(args[i], stringR)) {
-      argStr = argStr + "\n\t" + args[i] + "(argv[" + std::to_string(i + 1) + "])"+ ";";
+    if (regex_match((args[i]).c_str(), m, intR)) {
+      argStr = argStr + "\n\t" + args[i] + " = atoi(argv[" + std::to_string(static_cast<long long int>(i + 1)) + "])"+ ";";
+    } else if (regex_match((args[i]).c_str(), m, doubleR)) {
+      argStr = argStr + "\n\t" + args[i] + " = atof(argv[" + std::to_string(static_cast<long long int>(i + 1)) + "])"+ ";";      
+    } else if (regex_match((args[i]).c_str(), m, stringR)) {
+      argStr = argStr + "\n\t" + args[i] + "(argv[" + std::to_string(static_cast<long long int>(i + 1)) + "])"+ ";";
     } else {
       std::cout << "Couldn't recognize user defined function parameter." << std::endl;
       exit(EXIT_FAILURE);

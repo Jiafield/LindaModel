@@ -98,13 +98,13 @@ void eval(std::vector<std::string> &elems, VarMap &localVars, FunctSet &userDefi
       // first case: get expression result
       int result = evaluateExp(elems[i], loopSymbols, userDefinedFuncs, localVars, threadNum);
       if (result != -1) {
-	elems[i] = std::to_string(result);
+	elems[i] = std::to_string(static_cast<long long int>(result));
       } else {
 	std::cout << "Couldn't evaluate exp " << elems[i] << std::endl;
       }
     } else if (loopSymbols.find(elems[i]) != loopSymbols.end()) {
       //second case: Change loop symbol to value
-      elems[i] = std::to_string(loopSymbols[elems[i]]);
+      elems[i] = std::to_string(static_cast<long long int>(loopSymbols[elems[i]]));
     }
   }
 
@@ -306,10 +306,11 @@ void *threadProcessor(void *args) {
 }
 
 int main(int argc, char** argv) {
-  std::string filename(argv[1]);
+  //std::string filename(argv[1]);
   // Standard output and input
-  //std::cout << "Enter input file path: ";
-  //std::cin >> filename;
+  std::string filename;
+  std::cout << "Enter input file path: ";
+  std::cin >> filename;
   // Open .bat file
   std::ifstream infile(filename.c_str());
   if (!infile) {
@@ -341,7 +342,7 @@ int main(int argc, char** argv) {
   void *exit_status;
 
   for (int i = 0; i < numThread; i++) {
-    lines[i] = lines[i] + "#" + std::to_string(i);
+    lines[i] = lines[i] + "#" + std::to_string(static_cast<long long int>(i));
     std::cout << "Create thread for file \"" << lines[i] << "\'" << std::endl;
     //std::cout << "args " << args << std::endl;
     status = pthread_create(allThreads + i, NULL, threadProcessor, (void *)(lines[i].c_str()));
